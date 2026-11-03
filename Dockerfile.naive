@@ -1,0 +1,13 @@
+FROM ubuntu:24.04
+
+RUN apt-get update && apt-get install -y python3 python3-pip python3-venv
+
+WORKDIR /app
+COPY . .
+
+RUN pip3 install --break-system-packages -r requirements-train.txt -r requirements-serve.txt
+
+RUN python3 -m training.train --data-path data/raw/breast_cancer.csv --output-dir artifacts --model-version 1.0.0
+
+EXPOSE 8000
+CMD ["python3", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
