@@ -1,2 +1,3 @@
 -r requirements-train.txt
 dvc==3.56.0
+pathspec==0.12.1
