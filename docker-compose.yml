@@ -1,0 +1,32 @@
+services:
+  api:
+    build:
+      context: .
+      args:
+        MODEL_VERSION: ${MODEL_VERSION}
+        GIT_SHA: ${GIT_SHA}
+    image: ${DOCKERHUB_USER}/breast-cancer-triage-api:${IMAGE_TAG}
+    ports:
+      - "${HOST_PORT}:8000"
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      DECISION_THRESHOLD: ${DECISION_THRESHOLD}
+      LOG_LEVEL: ${LOG_LEVEL}
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  redis:
+    image: redis:7.2-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  redis-data:
