@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 
 import joblib
 import numpy as np
+import redis
 import sklearn
 from fastapi import FastAPI
 from pydantic import Field, create_model
@@ -28,6 +29,7 @@ PredictionRequest = create_model(
     **{f: (float, Field(..., ge=0, allow_inf_nan=False)) for f in FEATURES},
 )
 
+COUNTER_KEY = "predictions_served"
 state: dict = {}
 
 
@@ -37,6 +39,16 @@ def _threshold() -> float:
     except ValueError:
         log.error("DECISION_THRESHOLD must be a number")
         raise
+
+
+def _make_redis():
+    host = os.getenv("REDIS_HOST")
+    if not host:
+        return None
+    port = int(os.getenv("REDIS_PORT", "6379"))
+    log.info("Redis counter enabled at %s:%s", host, port)
+    return redis.Redis(host=host, port=port, socket_connect_timeout=1,
+                       socket_timeout=1, decode_responses=True)
 
 
 @asynccontextmanager
@@ -55,6 +67,7 @@ async def lifespan(app: FastAPI):
         raise SystemExit(1)
     state["threshold"] = _threshold()
     state["version"] = os.getenv("MODEL_VERSION", state["card"]["model_version"])
+    state["redis"] = _make_redis()
     log.info("Model loaded: family=%s version=%s threshold=%s",
              state["card"]["model_family"], state["version"], state["threshold"])
     yield
@@ -77,6 +90,14 @@ def predict(req: PredictionRequest):
     p_mal = float(model.predict_proba(X)[0][mal_idx])
     label = "malignant" if p_mal >= state["threshold"] else "benign"
     log.info("prediction label=%s p_malignant=%.4f", label, p_mal)
+
+    r = state.get("redis")
+    if r is not None:
+        try:
+            r.incr(COUNTER_KEY)
+        except redis.RedisError as exc:
+            log.warning("Redis unavailable, counter not incremented: %s", exc)
+
     return {
         "label": label,
         "malignant_probability": round(p_mal, 4),
@@ -101,5 +122,11 @@ def model_info():
 
 @app.get("/stats")
 def stats():
-    # Placeholder until Milestone 4 (Redis counter)
-    return {"predictions_served": None, "note": "redis counter not enabled"}
+    r = state.get("redis")
+    if r is None:
+        return {"predictions_served": None, "note": "redis counter not enabled"}
+    try:
+        return {"predictions_served": int(r.get(COUNTER_KEY) or 0)}
+    except redis.RedisError as exc:
+        log.warning("Redis unavailable: %s", exc)
+        return {"predictions_served": None, "note": "redis unreachable"}
